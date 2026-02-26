@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greenhouse Control</title>
+    <!-- MQTT JavaScript Library -->
+    <script src="https://unpkg.com/paho-mqtt@1.1.0/paho-mqtt.js"></script>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-color: #1E1E1E;
+            --text-color: #E0E0E0;
+            --primary-color: #4CAF50;
+            --accent-color: #81C784;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            text-align: center;
+            margin: 0;
+            padding: 1rem;
+        }
+        h1 { color: var(--primary-color); }
+        .container { max-width: 800px; margin: auto; }
+        .card { background: var(--card-color); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+        
+        #status { font-style: italic; color: #aaa; margin-top: 1rem; }
+
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+        .sensor-card h2 { margin-top: 0; font-size: 1rem; color: var(--accent-color); font-weight: normal; }
+        .sensor-card .value { font-size: 2rem; font-weight: bold; }
+
+        .control-row { display: flex; justify-content: space-between; align-items: center; padding: 1rem; }
+        .control-row span { font-size: 1.2rem; }
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--primary-color); }
+        input:focus + .slider { box-shadow: 0 0 1px var(--primary-color); }
+        input:checked + .slider:before { transform: translateX(26px); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Greenhouse Control</h1>
+        <p id="status">Status: Disconnected</p>
+
+        <div id="dashboard">
+            <div class="card card-grid">
+                <div class="sensor-card">
+                    <h2>Temperature</h2>
+                    <p><span class="value" id="temp">--</span> &deg;C</p>
+                </div>
+                <div class="sensor-card">
+                    <h2>Humidity</h2>
+                    <p><span class="value" id="hum">--</span> &percnt;</p>
+                </div>
+                <div class="sensor-card">
+                    <h2>Soil</h2>
+                    <p><span class="value" id="soil">--</span></p>
+                </div>
+                <div class="sensor-card">
+                    <h2>Light</h2>
+                    <p><span class="value" id="light">--</span> Lux</p>
+                </div>
+                <!-- Naya CO2 Card -->
+                <div class="sensor-card" style="grid-column: span 2;">
+                    <h2>CO2 Level</h2>
+                    <p><span class="value" id="co2">--</span> ppm</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="control-row">
+                    <span>Water Pump</span>
+                    <label class="switch"><input type="checkbox" id="relay-pump" onchange="toggleRelay('relay-pump', this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="control-row">
+                    <span>Exhaust Fan</span>
+                    <label class="switch"><input type="checkbox" id="relay-exhaust-fan" onchange="toggleRelay('relay-exhaust-fan', this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="control-row">
+                    <span>Humidifier</span>
+                    <label class="switch"><input type="checkbox" id="relay-humidifier" onchange="toggleRelay('relay-humidifier', this.checked)"><span class="slider"></span></label>
+                </div>
+                 <div class="control-row">
+                    <span>Solenoid</span>
+                    <label class="switch"><input type="checkbox" id="relay-solenoid" onchange="toggleRelay('relay-solenoid', this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="control-row">
+                    <span>Grow Light</span>
+                    <label class="switch"><input type="checkbox" id="relay-grow-light" onchange="toggleRelay('relay-grow-light', this.checked)"><span class="slider"></span></label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const aioUser = 'GreenhouseRNA';
+    const aioKey = 'aio_VyBt48nDAywmDNrKvWawMuwmCJVs';
+    let client;
+    const statusElem = document.getElementById('status');
+
+    window.onload = function() {
+        startConnect();
+    };
+
+    function startConnect() {
+        client = new Paho.Client("io.adafruit.com", 443, "/mqtt", "webapp_" + parseInt(Math.random() * 100));
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+        statusElem.textContent = 'Status: Connecting...';
+        client.connect({
+            userName: aioUser,
+            password: aioKey,
+            useSSL: true,
+            onSuccess: onConnect,
+            onFailure: onFailure
+        });
+    };
+
+    function onConnect() {
+        console.log("Connected to Adafruit IO!");
+        statusElem.textContent = 'Status: Connected';
+        // Sabhi feeds ko subscribe karna
+        client.subscribe(aioUser + '/feeds/temperature');
+        client.subscribe(aioUser + '/feeds/humidity');
+        client.subscribe(aioUser + '/feeds/soil-moisture');
+        client.subscribe(aioUser + '/feeds/light-level');
+        client.subscribe(aioUser + '/feeds/co2-level'); // Naya CO2 feed subscribe karna
+        client.subscribe(aioUser + '/feeds/relay-pump');
+        client.subscribe(aioUser + '/feeds/relay-exhaust-fan');
+        client.subscribe(aioUser + '/feeds/relay-humidifier');
+        client.subscribe(aioUser + '/feeds/relay-solenoid');
+        client.subscribe(aioUser + '/feeds/relay-grow-light');
+    }
+
+    function onFailure(response) {
+        statusElem.textContent = "Connection Failed: " + response.errorMessage;
+    }
+
+    function onConnectionLost(responseObject) {
+        if (responseObject.errorCode !== 0) {
+            statusElem.textContent = 'Status: Disconnected';
+        }
+    }
+
+    function onMessageArrived(message) {
+        const topic = message.destinationName;
+        const payload = message.payloadString;
+        const feedName = topic.split('/')[2];
+        
+        if (feedName === 'temperature') document.getElementById('temp').textContent = parseFloat(payload).toFixed(1);
+        if (feedName === 'humidity') document.getElementById('hum').textContent = parseFloat(payload).toFixed(1);
+        if (feedName === 'soil-moisture') document.getElementById('soil').textContent = payload;
+        if (feedName === 'light-level') document.getElementById('light').textContent = parseFloat(payload).toFixed(1);
+        if (feedName === 'co2-level') document.getElementById('co2').textContent = parseFloat(payload).toFixed(0);
+
+        if (feedName.startsWith('relay-')) {
+            document.getElementById(feedName).checked = (payload === 'ON');
+        }
+    }
+
+    function toggleRelay(feedName, isChecked) {
+        const message = new Paho.Message(isChecked ? 'ON' : 'OFF');
+        message.destinationName = aioUser + '/feeds/' + feedName;
+        client.send(message);
+    }
+</script>
+
+</body>
+</html>
+
